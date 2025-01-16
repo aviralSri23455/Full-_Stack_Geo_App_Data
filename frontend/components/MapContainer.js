@@ -6,15 +6,7 @@ import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
 import * as turf from '@turf/turf';
 import { kml } from '@tmcw/togeojson';
 import * as d3 from 'd3';
-import {
-  EyeIcon,
-  EyeOffIcon,
-  LayersIcon,
-  TrashIcon,
-  MapPinIcon,
-  PenToolIcon,
-  MousePointerIcon,
-} from 'lucide-react';
+import { EyeIcon, EyeOffIcon, TrashIcon, XCircleIcon } from 'lucide-react';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -26,6 +18,7 @@ const MapContainer = () => {
   const [selectedTool, setSelectedTool] = useState('select');
   const [mapInitialized, setMapInitialized] = useState(false);
   const [distance, setDistance] = useState(null);
+  const [area, setArea] = useState(null);
   const [uploadedLayers, setUploadedLayers] = useState([]);
   const [layerVisibility, setLayerVisibility] = useState({});
   const [activeTab, setActiveTab] = useState('draw');
@@ -35,7 +28,7 @@ const MapContainer = () => {
   const [lastClick, setLastClick] = useState({ time: 0, coordinates: null });
   const [isDragging, setIsDragging] = useState(false);
   const [draggedMarker, setDraggedMarker] = useState(null);
-  const [mapStyle, setMapStyle] = useState('mapbox://styles/mapbox/streets-v12'); // Default map style
+  const [mapStyle, setMapStyle] = useState('mapbox://styles/mapbox/streets-v12');
 
   useEffect(() => {
     if (typeof window !== 'undefined' && mapboxgl.accessToken && !map.current && mapContainer.current) {
@@ -56,9 +49,11 @@ const MapContainer = () => {
   }, [mapInitialized, markers]);
 
   const initializeMap = () => {
+    if (!mapboxgl) return;
+
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
-      style: mapStyle, // Dynamically set the map style
+      style: mapStyle,
       center: [-74.5, 40],
       zoom: 9,
       pitch: 45,
@@ -177,9 +172,16 @@ const MapContainer = () => {
     } else {
       const newMarker = { id: `marker-${currentTime}`, lng: clickCoordinates.lng, lat: clickCoordinates.lat };
       setMarkers([...markers, newMarker]);
+      createBufferZone(newMarker);
     }
 
     setLastClick({ time: currentTime, coordinates: clickCoordinates });
+  };
+
+  const createBufferZone = (marker) => {
+    const point = turf.point([marker.lng, marker.lat]);
+    const buffer = turf.buffer(point, 1, { units: 'kilometers' });
+    draw.current.add(buffer); // Draw the buffer zone on the map
   };
 
   const handleMouseMove = (e) => {
@@ -205,6 +207,31 @@ const MapContainer = () => {
     } else {
       setDistance(null);
     }
+
+    const polygons = data.features.filter((f) => f.geometry.type === 'Polygon');
+    if (polygons.length > 0) {
+      const areaPolygon = polygons[0];
+      const areaInKm2 = turf.area(areaPolygon) / 1000000;
+      const areaInMiles2 = areaInKm2 * 0.386102;
+      setArea({
+        km2: areaInKm2.toFixed(2),
+        miles2: areaInMiles2.toFixed(2),
+      });
+    } else {
+      setArea(null);
+    }
+  };
+
+  const clearMeasurements = () => {
+    setDistance(null);
+    setArea(null);
+    const features = draw.current.getAll();
+    const measurementFeatures = features.features.filter(
+      f => f.geometry.type === 'LineString' || f.geometry.type === 'Polygon'
+    );
+    measurementFeatures.forEach(feature => {
+      draw.current.delete(feature.id);
+    });
   };
 
   const handleToolSelect = (tool) => {
@@ -231,7 +258,7 @@ const MapContainer = () => {
   const toggle3DTerrain = () => {
     setShow3DTerrain(!show3DTerrain);
     if (map.current) {
-      map.current.setPitch(show3DTerrain ? 0 : 60); // Toggle between 0 and 60 degrees pitch for 3D effect
+      map.current.setPitch(show3DTerrain ? 0 : 60);
     }
   };
 
@@ -259,6 +286,8 @@ const MapContainer = () => {
         const newLayer = {
           id: Date.now(),
           name: file.name,
+          type: file.name.endsWith('.geojson') ? 'GeoJSON' : 'KML',
+          visibility: true,
           data: geojsonData,
         };
 
@@ -271,26 +300,33 @@ const MapContainer = () => {
     reader.readAsText(file);
   };
 
+  const toggleLayerVisibility = (layerId) => {
+    setLayerVisibility({
+      ...layerVisibility,
+      [layerId]: !layerVisibility[layerId],
+    });
+  };
+
   return (
-    <div className="relative w-full h-screen sm:h-[600px]">
+    <div className="relative w-full h-screen sm:h-[600px] md:h-[800px]">
       <div ref={mapContainer} className="w-full h-full" />
-      <div className="absolute p-4 space-y-4 bg-white rounded-lg shadow-xl backdrop-blur-sm bg-opacity-95 top-2 left-2 w-72 sm:w-80">
+      <div className="absolute w-full p-4 space-y-4 bg-white rounded-lg shadow-xl top-2 left-2 sm:w-72 md:w-80 backdrop-blur-sm bg-opacity-95">
         <div className="space-y-2">
           <button
-            onClick={() => handleStyleChange('mapbox://styles/mapbox/satellite-v9')}
-            className="w-full px-4 py-2 text-white transition-colors duration-200 bg-blue-500 rounded-md hover:bg-blue-600"
+            onClick={() => handleStyleChange('mapbox://styles/mapbox/standard-satellite')}
+            className="w-full px-4 py-2 text-white bg-blue-500 rounded-md hover:bg-blue-600"
           >
             Satellite
           </button>
           <button
             onClick={() => handleStyleChange('mapbox://styles/mapbox/outdoors-v12')}
-            className="w-full px-4 py-2 text-white transition-colors duration-200 bg-green-500 rounded-md hover:bg-green-600"
+            className="w-full px-4 py-2 text-white bg-green-500 rounded-md hover:bg-green-600"
           >
             Terrain
           </button>
           <button
             onClick={() => handleStyleChange('mapbox://styles/mapbox/streets-v12')}
-            className="w-full px-4 py-2 text-white transition-colors duration-200 bg-gray-500 rounded-md hover:bg-gray-600"
+            className="w-full px-4 py-2 text-white bg-gray-500 rounded-md hover:bg-gray-600"
           >
             Street View
           </button>
@@ -312,133 +348,104 @@ const MapContainer = () => {
         </div>
 
         {activeTab === 'draw' && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-4 gap-2">
-              <button
-                onClick={() => handleToolSelect('point')}
-                className={`flex flex-col items-center p-3 rounded-lg transition-colors duration-200 ${selectedTool === 'point' ? 'bg-blue-500 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
-              >
-                <MapPinIcon className="w-5 h-5 mb-1" />
-                <span className="text-xs font-medium">Point</span>
-              </button>
-              <button
-                onClick={() => handleToolSelect('polygon')}
-                className={`flex flex-col items-center p-3 rounded-lg transition-colors duration-200 ${selectedTool === 'polygon' ? 'bg-blue-500 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
-              >
-                <PenToolIcon className="w-5 h-5 mb-1" />
-                <span className="text-xs font-medium">Polygon</span>
-              </button>
-              <button
-                onClick={() => handleToolSelect('line')}
-                className={`flex flex-col items-center p-3 rounded-lg transition-colors duration-200 ${selectedTool === 'line' ? 'bg-blue-500 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
-              >
-                <LayersIcon className="w-5 h-5 mb-1" />
-                <span className="text-xs font-medium">Line</span>
-              </button>
-              <button
-                onClick={() => handleToolSelect('select')}
-                className={`flex flex-col items-center p-3 rounded-lg transition-colors duration-200 ${selectedTool === 'select' ? 'bg-blue-500 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
-              >
-                <MousePointerIcon className="w-5 h-5 mb-1" />
-                <span className="text-xs font-medium">Select</span>
-              </button>
-            </div>
-
-            {distance && (
-              <div className="p-4 space-y-1 rounded-lg bg-blue-50">
-                <div className="flex items-center space-x-2">
-                  <LayersIcon className="w-4 h-4 text-blue-500" />
-                  <h3 className="font-medium text-blue-900">Measured Distance</h3>
-                </div>
-                <p className="text-sm text-blue-700">
-                  {distance.km} km / {distance.miles} miles
-                </p>
-              </div>
-            )}
-
-            <div className="p-4 space-y-1 rounded-lg bg-blue-50">
-              <div className="flex items-center space-x-2">
-                <MapPinIcon className="w-4 h-4 text-blue-500" />
-                <h3 className="font-medium text-blue-900">Markers</h3>
-              </div>
-              <p className="text-sm text-blue-700">
-                {markers.length} marker{markers.length !== 1 ? 's' : ''} placed
-              </p>
-            </div>
-
+          <div className="space-y-2">
             <button
-              onClick={toggle3DTerrain}
-              className="w-full px-4 py-2 text-white transition-colors duration-200 bg-green-500 rounded-md hover:bg-green-600"
+              onClick={() => handleToolSelect('point')}
+              className="w-full px-4 py-2 text-white bg-indigo-500 rounded-md hover:bg-indigo-600"
             >
-              Toggle 3D Terrain
+              Point Tool
             </button>
-
-            {/* Delete Button */}
             <button
-             onClick={handleTrashButtonClick}
-             className="w-full px-4 py-2 text-white transition-colors duration-200 bg-red-500 rounded-md hover:bg-red-600"
+              onClick={() => handleToolSelect('polygon')}
+              className="w-full px-4 py-2 text-white bg-green-500 rounded-md hover:bg-green-600"
             >
-              Clear All Drawn Features & Markers
+              Polygon Tool
+            </button>
+            <button
+              onClick={() => handleToolSelect('line')}
+              className="w-full px-4 py-2 text-white bg-yellow-500 rounded-md hover:bg-yellow-600"
+            >
+              Line Tool
+            </button>
+            <button
+              onClick={() => handleToolSelect('select')}
+              className="w-full px-4 py-2 text-white bg-gray-500 rounded-md hover:bg-gray-600"
+            >
+              Select Tool
             </button>
           </div>
         )}
 
-        {/* Layer Upload & Management */}
         {activeTab === 'layers' && (
-          <div className="space-y-4">
-            <label className="block">
-              <span className="sr-only">Upload file</span>
-              <input
-                type="file"
-                accept=".geojson,.kml"
-                onChange={handleFileUpload}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 focus:outline-none"
-              />
-            </label>
-
-            <div className="space-y-2">
-              {uploadedLayers.map((layer) => (
-                <div
-                  key={layer.id}
-                  className="relative flex items-center justify-between p-3 transition-colors duration-200 rounded-lg hover:bg-gray-50"
-                  onMouseEnter={() => setHoveredLayer(layer.id)}
-                  onMouseLeave={() => setHoveredLayer(null)}
-                >
-                  <span className="text-sm font-medium text-gray-700">{layer.name}</span>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => toggleLayerVisibility(layer.id)}
-                      className="p-1.5 rounded-md hover:bg-gray-100 transition-colors duration-200"
+          <div className="space-y-2">
+            <button
+              onClick={handleTrashButtonClick}
+              className="w-full px-4 py-2 text-white bg-red-500 rounded-md hover:bg-red-600"
+            >
+              Clear Layers
+            </button>
+            <input
+              type="file"
+              accept=".geojson,.kml"
+              onChange={handleFileUpload}
+              className="w-full px-4 py-2 text-gray-600 bg-gray-100 rounded-md"
+            />
+            {uploadedLayers.length > 0 && (
+              <ul className="space-y-2">
+                {uploadedLayers.map((layer) => (
+                  <li key={layer.id} className="relative flex items-center justify-between">
+                    <div
+                      onMouseEnter={() => setHoveredLayer(layer)}
+                      onMouseLeave={() => setHoveredLayer(null)}
+                      className="flex items-center space-x-2 text-sm font-semibold text-gray-800"
                     >
+                      <span>{layer.name}</span>
                       {layerVisibility[layer.id] ? (
-                        <EyeIcon className="w-5 h-5 text-blue-600" />
+                        <EyeIcon
+                          onClick={() => toggleLayerVisibility(layer.id)}
+                          className="w-5 h-5 text-green-500 cursor-pointer"
+                        />
                       ) : (
-                        <EyeOffIcon className="w-5 h-5 text-gray-400" />
+                        <EyeOffIcon
+                          onClick={() => toggleLayerVisibility(layer.id)}
+                          className="w-5 h-5 text-gray-500 cursor-pointer"
+                        />
                       )}
-                    </button>
-                    <button
-                      onClick={() => removeLayer(layer.id)}
-                      className="p-1.5 rounded-md hover:bg-gray-100 transition-colors duration-200"
-                    >
-                      <TrashIcon className="w-5 h-5 text-red-500 hover:text-red-600" />
-                    </button>
-                  </div>
-
-                  {hoveredLayer === layer.id && (
-                    <div className="absolute right-0 w-48 p-3 mt-1 space-y-2 bg-white border rounded-lg shadow-lg">
-                      <h3 className="font-medium text-gray-700">Layer Info</h3>
-                      <p className="text-xs text-gray-500">Name: {layer.name}</p>
-                      <p className="text-xs text-gray-500">Type: GeoJSON</p>
-                      <p className="text-xs text-gray-500">
-                        Visibility: {layerVisibility[layer.id] ? 'Visible' : 'Hidden'}
-                      </p>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+
+                    {/* Hover card */}
+                    {hoveredLayer && hoveredLayer.id === layer.id && (
+                      <div className="absolute left-0 z-10 w-48 p-2 mt-2 bg-white border border-gray-300 rounded-md shadow-lg top-full">
+                        <div className="text-xs text-gray-500">{`Name: ${layer.name}`}</div>
+                        <div className="text-xs text-gray-500">{`Type: ${layer.type}`}</div>
+                        <div className="text-xs text-gray-500">{`Visibility: ${layerVisibility[layer.id] ? 'Visible' : 'Hidden'}`}</div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold">Distance:</span>
+            <span className="text-sm text-gray-600">{distance ? `${distance.km} km (${distance.miles} miles)` : '—'}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold">Area:</span>
+            <span className="text-sm text-gray-600">{area ? `${area.km2} km² (${area.miles2} miles²)` : '—'}</span>
+          </div>
+
+          <button
+            onClick={clearMeasurements}
+            className="flex items-center justify-center w-full px-4 py-2 mt-2 text-white bg-gray-500 rounded-md hover:bg-gray-600"
+          >
+            <XCircleIcon className="w-5 h-5 mr-2" />
+            Clear Measurements
+          </button>
+        </div>
       </div>
     </div>
   );
