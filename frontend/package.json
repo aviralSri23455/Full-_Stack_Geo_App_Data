@@ -30,8 +30,8 @@
     "mapbox-gl": "^3.9.2",
     "next": "^15.1.4",
     "next-auth": "^4.24.11",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "react-leaflet": "^5.0.0",
     "three": "^0.172.0",
     "togeojson": "^0.16.0"
